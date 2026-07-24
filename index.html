@@ -1,14 +1,338 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Перенаправление...</title>
-  <script>
-    // Мгновенный редирект
-    window.location.href = "https://whyusername.t.me/";
-  </script>
+    <meta charset="UTF-8">
+    <title>Симулятор Бога: Деревня</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+        body { background: #1a1a1a; color: #fff; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Игровое поле */
+        #game-container { flex: 1; position: relative; background: #4a8505; cursor: crosshair; }
+        canvas { display: block; }
+
+        /* UI Панели */
+        #ui { width: 320px; background: #2c2c2c; border-left: 2px solid #444; padding: 15px; display: flex; flex-direction: column; gap: 15px; box-shadow: -5px 0 15px rgba(0,0,0,0.5); z-index: 10; }
+        h1 { font-size: 20px; color: #f1c40f; text-align: center; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .resource-bar { display: flex; justify-content: space-between; background: #111; padding: 10px; border-radius: 8px; border: 1px solid #555; }
+        .res-item { font-weight: bold; font-size: 14px; }
+        
+        .panel { background: #3a3a3a; padding: 10px; border-radius: 8px; border: 1px solid #555; }
+        .panel h2 { font-size: 14px; color: #aaa; margin-bottom: 8px; text-transform: uppercase; }
+
+        button { width: 100%; padding: 10px; margin: 4px 0; background: #27ae60; border: none; color: white; font-weight: bold; border-radius: 5px; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #2ecc71; }
+        button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
+        button.god-power { background: #8e44ad; }
+        button.god-power:hover { background: #9b59b6; }
+
+        #inspector { min-height: 120px; font-size: 13px; line-height: 1.5; }
+        .stat-line { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    </style>
 </head>
 <body>
-  <p>Если вы не были автоматически перенаправлены, <a href="https://whyusername.t.me/">нажмите здесь</a>.</p>
+
+    <div id="game-container">
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="ui">
+        <h1>👁️ Симулятор Бога</h1>
+        
+        <!-- Ресурсы -->
+        <div class="resource-bar">
+            <div class="res-item" style="color: #f1c40f;">🌾 Еда: <span id="res-food">0</span></div>
+            <div class="res-item" style="color: #e67e22;">🪵 Дерево: <span id="res-wood">0</span></div>
+            <div class="res-item" style="color: #3498db;">👥 Народишко: <span id="res-pop">0</span>/<span id="res-max-pop">0</span></div>
+        </div>
+
+        <!-- Божественные силы -->
+        <div class="panel">
+            <h2>⚡ Божественные силы</h2>
+            <button class="god-power" onclick="spawnHuman()">Создать Человека (🌾 10)</button>
+            <button class="god-power" onclick="castBlessing()">Ускорить всех (🌾 30)</button>
+        </div>
+
+        <!-- Постройки -->
+        <div class="panel">
+            <h2>🏗️ Строительство & Дома</h2>
+            <button onclick="upgradeBuilding('townhall')">Улучшить Ратушу (🪵 <span id="cost-th">20</span>)</button>
+            <button onclick="upgradeBuilding('farm')">Улучшить Ферму (🪵 <span id="cost-farm">15</span>)</button>
+            <button onclick="upgradeBuilding('mine')">Улучшить Лесопилку (🌾 <span id="cost-mine">15</span>)</button>
+        </div>
+
+        <!-- Инспектор выбранного объекта -->
+        <div class="panel" id="inspector">
+            <h2>🔍 Инспектор</h2>
+            <div id="inspect-content">Кликните на человека или здание, чтобы рассмотреть их.</div>
+        </div>
+    </div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+// Адаптация размера канваса
+function resizeCanvas() {
+    canvas.width = document.getElementById('game-container').clientWidth;
+    canvas.height = document.getElementById('game-container').clientHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// Состояние игры
+const gameState = {
+    food: 50,
+    wood: 50,
+    selectedObject: null,
+    buildings: {
+        townhall: { x: 0, y: 0, level: 1, name: "Главная Ратуша" },
+        farm: { x: 0, y: 0, level: 1, name: "Ферма" },
+        mine: { x: 0, y: 0, level: 1, name: "Лесопилка" }
+    }
+};
+
+// Расстановка зданий по центру
+gameState.buildings.townhall.x = canvas.width / 2;
+gameState.buildings.townhall.y = canvas.height / 2;
+gameState.buildings.farm.x = canvas.width / 2 - 120;
+gameState.buildings.farm.y = canvas.height / 2 + 50;
+gameState.buildings.mine.x = canvas.width / 2 + 120;
+gameState.buildings.mine.y = canvas.height / 2 - 50;
+
+// Класс Человека
+class Human {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.id = Math.floor(Math.random() * 8999) + 1000;
+        this.speed = 1.5;
+        this.power = 1;
+        this.level = 1;
+        this.target = null;
+        this.state = 'idle'; // idle, moving, working
+        this.workTimer = 0;
+        this.blessed = 0; // Время действия божественного ускорения
+    }
+
+    update() {
+        if (this.blessed > 0) this.blessed--;
+
+        const currentSpeed = this.blessed > 0 ? this.speed * 2 : this.speed;
+
+        // Логика поведения
+        if (this.state === 'idle') {
+            // Выбор работы
+            const targets = [gameState.buildings.farm, gameState.buildings.mine];
+            this.target = targets[Math.floor(Math.random() * targets.length)];
+            this.state = 'moving';
+        } else if (this.state === 'moving' && this.target) {
+            const dx = this.target.x - this.x;
+            const dy = this.target.y - this.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist < 20) {
+                this.state = 'working';
+                this.workTimer = 100 / this.power;
+            } else {
+                this.x += (dx / dist) * currentSpeed;
+                this.y += (dy / dist) * currentSpeed;
+            }
+        } else if (this.state === 'working') {
+            this.workTimer--;
+            if (this.workTimer <= 0) {
+                // Приносим ресурсы
+                if (this.target === gameState.buildings.farm) {
+                    gameState.food += Math.round(5 * this.power * (1 + gameState.buildings.farm.level * 0.2));
+                } else {
+                    gameState.wood += Math.round(5 * this.power * (1 + gameState.buildings.mine.level * 0.2));
+                }
+                this.state = 'idle';
+            }
+        }
+    }
+
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = this.blessed > 0 ? '#f39c12' : '#e74c3c';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = gameState.selectedObject === this ? 3 : 1;
+        ctx.stroke();
+
+        // Уровень над головой
+        ctx.fillStyle = '#fff';
+        ctx.font = '10px Arial';
+        ctx.fillText(`Lvl ${this.level}`, this.x - 10, this.y - 12);
+    }
+}
+
+const humans = [
+    new Human(canvas.width / 2 + 20, canvas.height / 2 + 20),
+    new Human(canvas.width / 2 - 20, canvas.height / 2 - 20)
+];
+
+// Клик по игровому полю (Выбор объекта)
+canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Проверка клика по людям
+    let found = false;
+    for (let h of humans) {
+        if (Math.hypot(h.x - clickX, h.y - clickY) < 15) {
+            gameState.selectedObject = h;
+            found = true;
+            break;
+        }
+    }
+
+    // Проверка клика по зданиям
+    if (!found) {
+        for (let key in gameState.buildings) {
+            let b = gameState.buildings[key];
+            if (Math.hypot(b.x - clickX, b.y - clickY) < 30) {
+                gameState.selectedObject = b;
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if (!found) gameState.selectedObject = null;
+    updateInspector();
+});
+
+// Функции управления и божественных сил
+function spawnHuman() {
+    const maxPop = gameState.buildings.townhall.level * 3 + 2;
+    if (gameState.food >= 10 && humans.length < maxPop) {
+        gameState.food -= 10;
+        humans.push(new Human(gameState.buildings.townhall.x, gameState.buildings.townhall.y + 40));
+    }
+}
+
+function castBlessing() {
+    if (gameState.food >= 30) {
+        gameState.food -= 30;
+        humans.forEach(h => h.blessed = 300); // 300 кадров ускорения
+    }
+}
+
+function upgradeBuilding(type) {
+    const b = gameState.buildings[type];
+    const costWood = type === 'townhall' ? b.level * 20 : (type === 'farm' ? b.level * 15 : 0);
+    const costFood = type === 'mine' ? b.level * 15 : 0;
+
+    if (gameState.wood >= costWood && gameState.food >= costFood) {
+        gameState.wood -= costWood;
+        gameState.food -= costFood;
+        b.level++;
+        updateInspector();
+    }
+}
+
+function upgradeHuman(id) {
+    const h = humans.find(x => x.id === id);
+    const cost = h.level * 15;
+    if (h && gameState.food >= cost) {
+        gameState.food -= cost;
+        h.level++;
+        h.power += 0.5;
+        h.speed += 0.2;
+        updateInspector();
+    }
+}
+
+// Обновление интерфейса
+function updateInspector() {
+    const container = document.getElementById('inspect-content');
+    const obj = gameState.selectedObject;
+
+    if (!obj) {
+        container.innerHTML = "Кликните на человека или здание, чтобы рассмотреть их.";
+        return;
+    }
+
+    if (obj instanceof Human) {
+        const upgradeCost = obj.level * 15;
+        container.innerHTML = `
+            <div class="stat-line"><b>Человек #${obj.id}</b></div>
+            <div class="stat-line">Уровень: <span>${obj.level}</span></div>
+            <div class="stat-line">Скорость: <span>${obj.speed.toFixed(1)}</span></div>
+            <div class="stat-line">Сила добычи: <span>${obj.power.toFixed(1)}</span></div>
+            <button onclick="upgradeHuman(${obj.id})">Прокачать человека (🌾 ${upgradeCost})</button>
+        `;
+    } else {
+        container.innerHTML = `
+            <div class="stat-line"><b>${obj.name}</b></div>
+            <div class="stat-line">Уровень постройки: <span>${obj.level}</span></div>
+            <div class="stat-line">Эффективность: <span>+${obj.level * 20}%</span></div>
+        `;
+    }
+}
+
+// Главный Игровой Цикл
+function gameLoop() {
+    // 1. Очистка и отрисовка травы
+    ctx.fillStyle = '#4a8505';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 2. Отрисовка дорожек (связей между зданиями)
+    ctx.strokeStyle = '#8c6747';
+    ctx.lineWidth = 15;
+    ctx.beginPath();
+    ctx.moveTo(gameState.buildings.farm.x, gameState.buildings.farm.y);
+    ctx.lineTo(gameState.buildings.townhall.x, gameState.buildings.townhall.y);
+    ctx.lineTo(gameState.buildings.mine.x, gameState.buildings.mine.y);
+    ctx.stroke();
+
+    // 3. Отрисовка Зданий
+    for (let key in gameState.buildings) {
+        let b = gameState.buildings[key];
+        
+        // Цвет и форма здания
+        ctx.fillStyle = key === 'townhall' ? '#7f8c8d' : (key === 'farm' ? '#f39c12' : '#d35400');
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 25, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = gameState.selectedObject === b ? '#fff' : '#2c3e50';
+        ctx.lineWidth = gameState.selectedObject === b ? 4 : 2;
+        ctx.stroke();
+
+        // Иконка / Имя
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${b.name} (Lvl ${b.level})`, b.x, b.y - 32);
+    }
+
+    // 4. Отрисовка и обновление людей
+    humans.forEach(h => {
+        h.update();
+        h.draw();
+    });
+
+    // 5. Обновление UI текстов
+    document.getElementById('res-food').innerText = gameState.food;
+    document.getElementById('res-wood').innerText = gameState.wood;
+    document.getElementById('res-pop').innerText = humans.length;
+    
+    const maxPop = gameState.buildings.townhall.level * 3 + 2;
+    document.getElementById('res-max-pop').innerText = maxPop;
+
+    document.getElementById('cost-th').innerText = gameState.buildings.townhall.level * 20;
+    document.getElementById('cost-farm').innerText = gameState.buildings.farm.level * 15;
+    document.getElementById('cost-mine').innerText = gameState.buildings.mine.level * 15;
+
+    requestAnimationFrame(gameLoop);
+}
+
+// Старт игры
+gameLoop();
+</script>
 </body>
 </html>
